@@ -1,0 +1,28 @@
+{
+    "best_model_name": "LogisticRegression",
+    "metrics": {
+        "Model": "LogisticRegression",
+        "CV Accuracy": 0.8387,
+        "CV ROC-AUC": 0.9025,
+        "Test Accuracy": 0.8852,
+        "Test Precision": 0.8387,
+        "Test Recall": 0.9286,
+        "Test F1": 0.8814,
+        "Test ROC-AUC": 0.9665
+    },
+    "features": [
+        "age",
+        "trestbps",
+        "chol",
+        "thalach",
+        "oldpeak",
+        "sex",
+        "cp",
+        "fbs",
+        "restecg",
+        "exang",
+        "slope",
+        "ca",
+        "thal"
+    ]
+}
