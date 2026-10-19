@@ -77,7 +77,7 @@ jobs:
         with:
           name: trained-artifacts
           path: .
-      - uses: actions/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
       - name: Build and verify serving image
         run: |
           set -euo pipefail
