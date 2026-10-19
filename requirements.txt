@@ -1,13 +1,14 @@
-# Production Dependencies for Heart Disease MLOps Serving API
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-pydantic>=2.9.0
-joblib>=1.4.0
-scikit-learn>=1.5.0
-pandas>=2.2.0
-numpy>=1.26.0
-scipy>=1.13.0
-prometheus-fastapi-instrumentator>=7.0.0
-prometheus-client>=0.20.0
-python-multipart>=0.0.12
-httpx>=0.27.0
+# Runtime dependencies. Pins are compatible with Python 3.12 and prevent
+# training/serving version skew when the serialized pipeline is loaded.
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+pydantic==2.10.6
+joblib==1.4.2
+scikit-learn==1.6.1
+pandas==2.2.3
+numpy==2.2.3
+scipy==1.15.2
+prometheus-fastapi-instrumentator==7.0.2
+prometheus-client==0.21.1
+python-multipart==0.0.20
+httpx==0.28.1

@@ -11,14 +11,12 @@ from contextlib import asynccontextmanager
 import json
 import logging
 import time
-from typing import Dict
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from src.api.schemas import HealthResponse, PatientInput, PredictionOutput
-from src.config import MODEL_ARTIFACT_PATH
 from src.predict import get_predictor
 
 # Configure structured logging

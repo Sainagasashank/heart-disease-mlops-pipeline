@@ -6,7 +6,7 @@ Ensures identical preprocessing between training and production inference.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict
 import joblib
 import numpy as np
 import pandas as pd

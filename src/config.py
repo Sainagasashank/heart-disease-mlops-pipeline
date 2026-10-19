@@ -51,7 +51,7 @@ BINARY_TARGET_COLUMN = "target_binary"
 RANDOM_STATE = 42
 TEST_SIZE = 0.2
 CV_FOLDS = 5
+INNER_CV_FOLDS = 3
 MLFLOW_EXPERIMENT_NAME = "heart-disease-prediction"
 SQLITE_DB_PATH = PROJECT_ROOT / "mlflow.db"
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", f"sqlite:///{SQLITE_DB_PATH.as_posix()}")
-

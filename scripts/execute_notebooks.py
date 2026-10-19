@@ -223,7 +223,7 @@ def create_and_run_training_notebook():
         # Cell 5: Markdown Section 2
         nbformat.v4.new_markdown_cell(
             "### 2. Candidate Model Specifications & Hyperparameter Grids\n"
-            "Three distinct model families with tuned hyperparameters are evaluated:"
+            "Three candidate families are tuned. The grid keys are Pipeline-qualified (`classifier__*`) so preprocessing remains inside every CV fold."
         ),
         # Cell 6: Candidate Models Code
         nbformat.v4.new_code_cell(
@@ -231,17 +231,22 @@ def create_and_run_training_notebook():
             "for name, conf in models.items():\n"
             "    print(f'Model: {name}')\n"
             "    print(f'  Estimator: {conf[\"estimator\"]}')\n"
-            "    print(f'  Parameters: {conf[\"params\"]}\\n')"
+            "    print(f'  Baseline parameters: {conf[\"params\"]}')\n"
+            "    print(f'  Tuning grid: {conf[\"param_grid\"]}\\n')"
         ),
         # Cell 7: Markdown Section 3
         nbformat.v4.new_markdown_cell(
             "### 3. Execute End-to-End Training, Cross-Validation & MLflow Experiment Tracking\n"
-            "We execute `train_and_track_experiments()`, logging all parameters, 5-fold CV metrics, confusion matrices, ROC curves, and model binaries to MLflow."
+            "Training uses an 80/20 split, 3-fold inner GridSearchCV on training data, and 5-fold outer nested CV. The champion is chosen by nested-CV ROC-AUC, not test performance. This notebook reads the current completed training outputs rather than creating extra MLflow runs."
         ),
         # Cell 8: Training Execution Code
         nbformat.v4.new_code_cell(
-            "metadata = train_and_track_experiments()\n"
-            "print('\\nChampion Model Selected:', metadata['best_model_name'])"
+            "import json\n"
+            "with open('models/model_metadata.json', encoding='utf-8') as handle:\n"
+            "    metadata = json.load(handle)\n"
+            "print('Champion Model Selected:', metadata['best_model_name'])\n"
+            "print('Selection criterion:', metadata['selection_criterion'])\n"
+            "print('Best parameters:', metadata['best_params'])"
         ),
         # Cell 9: Markdown Section 4
         nbformat.v4.new_markdown_cell(

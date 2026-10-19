@@ -9,16 +9,18 @@ Generates professional visualizations including:
 
 import logging
 from pathlib import Path
-import matplotlib.pyplot as plt
-import pandas as pd
-import seaborn as sns
+import matplotlib
 
-from src.config import (
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import pandas as pd  # noqa: E402
+import seaborn as sns  # noqa: E402
+
+from src.config import (  # noqa: E402
     BINARY_TARGET_COLUMN,
     CLEANED_CSV_PATH,
     FIGURES_DIR,
     NUMERICAL_FEATURES,
-    RAW_CSV_PATH,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -118,7 +120,6 @@ def plot_correlation_heatmap(df: pd.DataFrame, output_dir: Path = FIGURES_DIR) -
     fig, ax = plt.subplots(figsize=(11, 9))
     corr = df.corr()
 
-    mask = None
     sns.heatmap(
         corr,
         annot=True,

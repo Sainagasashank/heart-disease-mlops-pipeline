@@ -1,0 +1,4 @@
+Model,Grid Size,Best Inner-CV AUC,Best Params
+LogisticRegression,28,0.9109,"{\"classifier__C\": 0.1, \"classifier__class_weight\": null, \"classifier__penalty\": \"l2\"}"
+RandomForest,24,0.9028,"{\"classifier__max_depth\": 3, \"classifier__min_samples_leaf\": 2, \"classifier__n_estimators\": 200}"
+GradientBoosting,12,0.8874,"{\"classifier__learning_rate\": 0.03, \"classifier__max_depth\": 2, \"classifier__n_estimators\": 100}"

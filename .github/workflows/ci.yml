@@ -1,125 +1,111 @@
-name: Heart Disease MLOps CI/CD Pipeline
+name: Heart Disease MLOps CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
   lint-and-test:
-    name: Linting & Unit Testing
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install Dependencies
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && pip install -r requirements-dev.txt
+      - name: Lint and test
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-
-      - name: Code Quality & Linting
-        run: |
-          # Stop the build if there are Python syntax errors or undefined names
-          flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
-          # Exit-zero treats all errors as warnings
-          flake8 src tests --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-
-      - name: Run Pytest Suite with Coverage
-        run: |
-          pytest tests/ -v --junitxml=pytest-results.xml
-
-      - name: Upload Test Results
+          mkdir -p ci-logs
+          flake8 src test --max-complexity=10 --max-line-length=127 2>&1 | tee ci-logs/flake8.log
+          pytest test/ -v --junitxml=pytest-results.xml --cov=src --cov-report=xml 2>&1 | tee ci-logs/pytest.log
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: pytest-results
-          path: pytest-results.xml
+          name: lint-test-results
+          path: |
+            pytest-results.xml
+            coverage.xml
+            ci-logs/
 
   train-and-evaluate:
-    name: Model Training & Evaluation Benchmark
     needs: lint-and-test
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install Dependencies
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && pip install -r requirements-dev.txt
+      - name: Build data and train
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-
-      - name: Ingest & Preprocess Dataset
+          mkdir -p ci-logs
+          python -m src.data_loader 2>&1 | tee ci-logs/data_loader.log
+          python -m src.preprocessing 2>&1 | tee ci-logs/preprocessing.log
+          python -m src.eda 2>&1 | tee ci-logs/eda.log
+          python -m src.train 2>&1 | tee ci-logs/train.log
+      - name: Verify output artifacts
         run: |
-          python -m src.data_loader
-          python -m src.preprocessing
-          python -m src.eda
-
-      - name: Execute Model Training & MLflow Logging
-        run: |
-          python -m src.train
-
-      - name: Verify Model Artifact Exists
-        run: |
-          test -f models/heart_disease_pipeline.joblib || exit 1
-          test -f reports/model_comparison.csv || exit 1
-
-      - name: Upload Trained Model and Visualizations Artifacts
-        uses: actions/upload-artifact@v4
+          test -f models/heart_disease_pipeline.joblib
+          test -f models/model_metadata.json
+          test -f reports/model_comparison.csv
+          test -f reports/tuning_results.csv
+          test -f mlflow.db
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: trained-artifacts
           path: |
             models/
             reports/figures/
-            reports/model_comparison.csv
-            reports/model_comparison.md
+            reports/*.csv
+            reports/*.md
             mlflow.db
+            mlruns/
+            ci-logs/
 
   docker-build-verify:
-    name: Docker Build & Serving Smoke Test
     needs: train-and-evaluate
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Download Trained Model Artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
           name: trained-artifacts
           path: .
-
-      - name: Set up Docker Buildx
-        uses: actions/setup-buildx-action@v3
-
-      - name: Build Docker Serving Image
+      - uses: actions/setup-buildx-action@v3
+      - name: Build and verify serving image
         run: |
-          docker build -t heart-disease-api:ci .
-
-      - name: Run Container & Perform Endpoint Verification
-        run: |
+          set -euo pipefail
+          mkdir -p ci-logs
+          docker build -t heart-disease-api:ci . 2>&1 | tee ci-logs/docker-build.log
           docker run -d -p 8000:8000 --name heart-api-ci heart-disease-api:ci
-          sleep 5
-          # Health check
-          curl -f http://localhost:8000/health || exit 1
-          # Metrics check
-          curl -f http://localhost:8000/metrics || exit 1
-          # Prediction test
-          curl -X POST http://localhost:8000/predict \
-            -H "Content-Type: application/json" \
-            -d '{"age":63,"sex":1,"cp":1,"trestbps":145,"chol":233,"fbs":1,"restecg":2,"thalach":150,"exang":0,"oldpeak":2.3,"slope":3,"ca":0,"thal":6}' \
-            || exit 1
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://localhost:8000/health > ci-logs/health.json; then break; fi
+            if [ "$attempt" = 30 ]; then docker logs heart-api-ci; exit 1; fi
+            sleep 1
+          done
+          python - <<'PY'
+          import json
+          import urllib.request
+          request = urllib.request.Request("http://localhost:8000/predict", data=open("sample_patient.json", "rb").read(), headers={"Content-Type": "application/json"})
+          response = json.loads(urllib.request.urlopen(request).read())
+          assert response["prediction"] in (0, 1)
+          assert 0 <= response["confidence"] <= 1
+          assert "heart_disease_predictions_total" in urllib.request.urlopen("http://localhost:8000/metrics").read().decode()
+          PY
+      - name: Collect container logs and cleanup
+        if: always()
+        run: |
+          mkdir -p ci-logs
+          docker logs heart-api-ci > ci-logs/docker.log 2>&1 || true
+          docker rm -f heart-api-ci || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: docker-logs
+          path: ci-logs/

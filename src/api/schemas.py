@@ -1,7 +1,6 @@
 """Pydantic data validation contracts for FastAPI Heart Disease serving API."""
 
 from datetime import datetime, timezone
-from typing import Dict, Optional
 from pydantic import BaseModel, Field
 
 

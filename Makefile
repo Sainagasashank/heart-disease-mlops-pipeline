@@ -1,19 +1,11 @@
-.PHONY: help install data train test serve docker-build docker-run k8s-deploy report clean
+.PHONY: help all install data train lint test serve docker-build docker-run docker-test mlflow-ui monitoring-up monitoring-down traffic k8s-deploy report clean
 
-PYTHON := python
+PYTHON ?= python
 
 help:
-	@echo "Heart Disease MLOps Workflow Commands:"
-	@echo "  make install      Install production and development dependencies"
-	@echo "  make data         Acquire and preprocess UCI Heart Disease dataset"
-	@echo "  make train        Train models, evaluate CV, and log to MLflow"
-	@echo "  make test         Execute Pytest unit and integration test suite"
-	@echo "  make serve        Start FastAPI server locally on port 8000"
-	@echo "  make docker-build Build production Docker image"
-	@echo "  make docker-run   Run Docker container locally on port 8000"
-	@echo "  make k8s-deploy   Deploy manifests to Kubernetes cluster"
-	@echo "  make report       Generate 10-page PDF and DOCX academic reports"
-	@echo "  make clean        Remove cache files, compiled binaries, and temporary logs"
+	@echo "Targets: all install data train lint test serve docker-build docker-run docker-test mlflow-ui monitoring-up monitoring-down traffic k8s-deploy report clean"
+
+all: data train lint test
 
 install:
 	$(PYTHON) -m pip install --upgrade pip
@@ -27,8 +19,11 @@ data:
 train:
 	$(PYTHON) -m src.train
 
+lint:
+	$(PYTHON) -m flake8 src test --max-complexity=10 --max-line-length=127
+
 test:
-	$(PYTHON) -m pytest tests/ -v
+	$(PYTHON) -m pytest test/ -v
 
 serve:
 	$(PYTHON) -m uvicorn src.api.app:app --host 0.0.0.0 --port 8000
@@ -39,15 +34,27 @@ docker-build:
 docker-run:
 	docker run -d -p 8000:8000 --name heart-disease-serving heart-disease-api:latest
 
+docker-test:
+	$(PYTHON) scripts/test_serving.py
+
+mlflow-ui:
+	$(PYTHON) scripts/relocate_mlflow.py
+	$(PYTHON) -m mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
+
+monitoring-up:
+	docker compose -f monitoring/docker-compose.monitoring.yml up --build -d
+
+monitoring-down:
+	docker compose -f monitoring/docker-compose.monitoring.yml down
+
+traffic:
+	$(PYTHON) scripts/generate_traffic.py
+
 k8s-deploy:
-	kubectl apply -f k8s/deployment.yaml
-	kubectl apply -f k8s/service.yaml
-	kubectl apply -f k8s/ingress.yaml
-	kubectl apply -f k8s/hpa.yaml
+	powershell -ExecutionPolicy Bypass -File scripts/deploy_k8s.ps1
 
 report:
 	$(PYTHON) scripts/generate_report.py
 
 clean:
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
+	$(PYTHON) -c "import shutil; from pathlib import Path; [shutil.rmtree(p, ignore_errors=True) for p in Path('.').rglob('__pycache__')]; shutil.rmtree('.pytest_cache', ignore_errors=True)"

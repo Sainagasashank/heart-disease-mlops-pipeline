@@ -1,5 +1,5 @@
-# Multi-stage / optimized slim production Dockerfile for Heart Disease Serving API
-FROM python:3.11-slim as runtime
+# Slim production runtime image for Heart Disease Serving API.
+FROM python:3.12-slim AS runtime
 
 # Set security and performance environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \

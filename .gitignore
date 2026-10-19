@@ -50,6 +50,8 @@ pytest-results.xml
 
 # Environments
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
@@ -63,3 +65,7 @@ venv.bak/
 
 # Large local zip files
 *.zip
+
+# Local command/build logs and downloaded installers
+*.log
+*.exe

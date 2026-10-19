@@ -3,13 +3,14 @@
 import logging
 from pathlib import Path
 from typing import Any, Dict, Tuple
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import seaborn as sns
-from sklearn.metrics import (
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import seaborn as sns  # noqa: E402
+from sklearn.metrics import (  # noqa: E402
     accuracy_score,
-    classification_report,
     confusion_matrix,
     f1_score,
     precision_score,
@@ -18,7 +19,7 @@ from sklearn.metrics import (
     roc_curve,
 )
 
-from src.config import FIGURES_DIR
+from src.config import FIGURES_DIR  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

@@ -1,236 +1,157 @@
-"""Model training, hyperparameter tuning, and MLflow experiment tracking module.
+"""Train, tune, evaluate and track the heart-disease candidate pipelines.
 
-Trains and evaluates:
-1. Logistic Regression (Regularized baseline)
-2. Random Forest Classifier (Ensemble)
-3. Gradient Boosting Classifier (Boosting)
-
-Logs parameters, cross-validation metrics, evaluation artifacts, and models to MLflow.
-Saves the best-performing end-to-end Pipeline to models/heart_disease_pipeline.joblib.
+The champion is selected using nested cross-validation on training data. The
+held-out test split is evaluated once only and is never a selection signal.
 """
 
 import json
 import logging
+import os
+from itertools import product
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
+
 import joblib
 import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
+from joblib import parallel_backend
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report
-from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_split
+from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_validate, train_test_split
 
-from src.config import (
-    CLEANED_CSV_PATH,
-    CV_FOLDS,
-    FIGURES_DIR,
-    MLFLOW_EXPERIMENT_NAME,
-    MLFLOW_TRACKING_URI,
-    MODEL_ARTIFACT_PATH,
-    MODELS_DIR,
-    RANDOM_STATE,
-    REPORTS_DIR,
-    TEST_SIZE,
-)
-from src.evaluate import (
-    compute_metrics,
-    plot_confusion_matrix,
-    plot_feature_importance,
-    plot_roc_curve,
-)
+from src.config import (CLEANED_CSV_PATH, CV_FOLDS, FIGURES_DIR, INNER_CV_FOLDS,
+                        MLFLOW_EXPERIMENT_NAME, MLFLOW_TRACKING_URI, MODEL_ARTIFACT_PATH,
+                        MODELS_DIR, RANDOM_STATE, REPORTS_DIR, TEST_SIZE)
+from src.evaluate import compute_metrics, plot_confusion_matrix, plot_feature_importance, plot_roc_curve
 from src.preprocessing import build_full_pipeline, load_and_preprocess_data, split_features_target
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+SCORING = ["accuracy", "precision", "recall", "f1", "roc_auc"]
+GRID_N_JOBS = -1 if os.getenv("MLOPS_GRID_PARALLEL", "1") == "1" else 1
 
 
-def get_candidate_models() -> Dict[str, Dict]:
-    """Define candidate classification models with tuned hyperparameter sets."""
+def get_candidate_models() -> Dict[str, Dict[str, Any]]:
+    """Return estimators, baseline parameters and Pipeline-valid tuning grids."""
     return {
         "LogisticRegression": {
-            "estimator": LogisticRegression(
-                C=0.1,
-                solver="liblinear",
-                max_iter=1000,
-                random_state=RANDOM_STATE,
-            ),
-            "params": {"C": 0.1, "solver": "liblinear"},
+            "estimator": LogisticRegression(solver="liblinear", max_iter=2000, random_state=RANDOM_STATE),
+            "params": {"solver": "liblinear", "max_iter": 2000, "random_state": RANDOM_STATE},
+            "param_grid": {"classifier__C": [0.01, 0.03, 0.1, 0.3, 1, 3, 10],
+                           "classifier__penalty": ["l1", "l2"],
+                           "classifier__class_weight": [None, "balanced"]},
         },
         "RandomForest": {
-            "estimator": RandomForestClassifier(
-                n_estimators=150,
-                max_depth=6,
-                min_samples_split=4,
-                min_samples_leaf=2,
-                random_state=RANDOM_STATE,
-            ),
-            "params": {
-                "n_estimators": 150,
-                "max_depth": 6,
-                "min_samples_split": 4,
-                "min_samples_leaf": 2,
-            },
+            "estimator": RandomForestClassifier(random_state=RANDOM_STATE, n_jobs=1),
+            "params": {"random_state": RANDOM_STATE, "n_jobs": 1},
+            "param_grid": {"classifier__n_estimators": [100, 200], "classifier__max_depth": [3, 5, 8, None],
+                           "classifier__min_samples_leaf": [1, 2, 4]},
         },
         "GradientBoosting": {
-            "estimator": GradientBoostingClassifier(
-                n_estimators=100,
-                learning_rate=0.05,
-                max_depth=3,
-                random_state=RANDOM_STATE,
-            ),
-            "params": {"n_estimators": 100, "learning_rate": 0.05, "max_depth": 3},
+            "estimator": GradientBoostingClassifier(random_state=RANDOM_STATE),
+            "params": {"random_state": RANDOM_STATE},
+            "param_grid": {"classifier__n_estimators": [100, 200], "classifier__learning_rate": [0.03, 0.05, 0.1],
+                           "classifier__max_depth": [2, 3]},
         },
     }
 
 
-def train_and_track_experiments(
-    data_path: Path = CLEANED_CSV_PATH,
-    tracking_uri: str = MLFLOW_TRACKING_URI,
-    experiment_name: str = MLFLOW_EXPERIMENT_NAME,
-) -> Dict[str, Any]:
-    """Train all candidate models, log to MLflow, and persist the top-performing pipeline."""
-    # Ensure dataset is ready
-    if not data_path.exists():
-        df = load_and_preprocess_data()
-    else:
-        df = pd.read_csv(data_path)
+def _grid_size(param_grid: Dict[str, list]) -> int:
+    return len(list(product(*param_grid.values())))
 
+
+def train_and_track_experiments(data_path: Path = CLEANED_CSV_PATH,
+                                tracking_uri: str = MLFLOW_TRACKING_URI,
+                                experiment_name: str = MLFLOW_EXPERIMENT_NAME) -> Dict[str, Any]:
+    """Tune each candidate and persist the nested-CV-selected champion."""
+    df = pd.read_csv(data_path) if data_path.exists() else load_and_preprocess_data()
     X, y = split_features_target(df)
-    logger.info(f"Splitting dataset: Total={len(X)}, Test Size={TEST_SIZE}, Random State={RANDOM_STATE}")
-
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
-    )
-
-    # Set up MLflow
+        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y)
+    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
-    logger.info(f"MLflow experiment configured: {experiment_name} at {tracking_uri}")
+    inner_cv = StratifiedKFold(n_splits=INNER_CV_FOLDS, shuffle=True, random_state=RANDOM_STATE)
+    outer_cv = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_STATE)
+    results, tuning_rows, fitted = [], [], {}
 
-    models = get_candidate_models()
-    results = []
-    trained_pipelines = {}
+    for model_name, config in get_candidate_models().items():
+        logger.info("Tuning %s", model_name)
+        pipeline = build_full_pipeline(config["estimator"])
+        grid = GridSearchCV(pipeline, config["param_grid"], scoring="roc_auc", cv=inner_cv,
+                            n_jobs=GRID_N_JOBS, refit=True, return_train_score=False)
+        # Keep outer folds serial so each inner GridSearchCV can safely use
+        # its required n_jobs=-1 without nested-process oversubscription.
+        # `n_jobs=-1` remains on GridSearchCV; this backend cap prevents
+        # oversubscription on Windows where each liblinear fit is inexpensive.
+        with parallel_backend("threading", n_jobs=1):
+            nested = cross_validate(grid, X_train, y_train, cv=outer_cv, scoring=SCORING, n_jobs=1)
+            grid.fit(X_train, y_train)
+        cv_metrics = {f"cv_{metric}_{suffix}": float(getattr(np, suffix)(nested[f"test_{metric}"]))
+                      for metric in SCORING for suffix in ("mean", "std")}
+        best_pipeline = grid.best_estimator_
+        fitted[model_name] = best_pipeline
+        best_params = dict(grid.best_params_)
+        best_params_text = json.dumps(best_params, default=str, sort_keys=True)
+        y_pred = best_pipeline.predict(X_test)
+        y_prob = best_pipeline.predict_proba(X_test)[:, 1]
+        test_metrics = compute_metrics(y_test.to_numpy(), y_pred, y_prob)
+        cm_path = plot_confusion_matrix(y_test.to_numpy(), y_pred, model_name, FIGURES_DIR)
+        roc_path, _ = plot_roc_curve(y_test.to_numpy(), y_prob, model_name, FIGURES_DIR)
+        feature_path = plot_feature_importance(best_pipeline, model_name, FIGURES_DIR)
+        report_path = REPORTS_DIR / f"classification_report_{model_name.lower()}.txt"
+        report_path.write_text(classification_report(y_test, y_pred, target_names=["No Disease", "Disease Present"]),
+                               encoding="utf-8")
+        tuning_path = REPORTS_DIR / f"tuning_cv_results_{model_name.lower()}.csv"
+        pd.DataFrame(grid.cv_results_).to_csv(tuning_path, index=False)
 
-    cv = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_STATE)
-    scoring = ["accuracy", "precision", "recall", "f1", "roc_auc"]
-
-    for model_name, config in models.items():
-        logger.info(f"\n{'='*25} Training {model_name} {'='*25}")
-        estimator = config["estimator"]
-        params = config["params"]
-
-        # Build full pipeline (preprocessor + model)
-        pipeline = build_full_pipeline(estimator)
-
-        # 1. Stratified Cross-Validation on Training Set
-        cv_scores = cross_validate(pipeline, X_train, y_train, cv=cv, scoring=scoring)
-        cv_metrics = {f"cv_{metric}_mean": float(np.mean(cv_scores[f"test_{metric}"])) for metric in scoring}
-        cv_stds = {f"cv_{metric}_std": float(np.std(cv_scores[f"test_{metric}"])) for metric in scoring}
-
-        # 2. Fit on Full Train Split
-        pipeline.fit(X_train, y_train)
-        trained_pipelines[model_name] = pipeline
-
-        # 3. Evaluate on Held-out Test Split
-        y_pred = pipeline.predict(X_test)
-        y_prob = pipeline.predict_proba(X_test)[:, 1]
-        test_metrics = compute_metrics(y_test.values, y_pred, y_prob)
-
-        logger.info(
-            f"{model_name} Results -> CV Accuracy: {cv_metrics['cv_accuracy_mean']:.3f} | "
-            f"Test Accuracy: {test_metrics['accuracy']:.3f} | Test ROC-AUC: {test_metrics['roc_auc']:.3f}"
-        )
-
-        # 4. Generate Evaluation Visualizations
-        cm_path = plot_confusion_matrix(y_test.values, y_pred, model_name, FIGURES_DIR)
-        roc_path, _ = plot_roc_curve(y_test.values, y_prob, model_name, FIGURES_DIR)
-        feat_path = plot_feature_importance(pipeline, model_name, FIGURES_DIR)
-
-        # Generate text classification report
-        cls_report = classification_report(y_test, y_pred, target_names=["No Disease", "Disease Present"])
-        report_file = REPORTS_DIR / f"classification_report_{model_name.lower()}.txt"
-        with open(report_file, "w") as f:
-            f.write(cls_report)
-
-        # 5. Log Everything to MLflow
         with mlflow.start_run(run_name=model_name):
-            # Log params
-            mlflow.log_params(params)
-            mlflow.log_param("test_size", TEST_SIZE)
-            mlflow.log_param("cv_folds", CV_FOLDS)
-            mlflow.log_param("random_state", RANDOM_STATE)
+            mlflow.log_params({f"baseline_{key}": value for key, value in config["params"].items()})
+            mlflow.log_params({f"best_{key}": value for key, value in best_params.items()})
+            mlflow.log_params({"tuning_method": "GridSearchCV nested cross-validation",
+                               "grid_candidates": _grid_size(config["param_grid"]), "test_size": TEST_SIZE,
+                               "cv_folds_outer": CV_FOLDS, "cv_folds_inner": INNER_CV_FOLDS,
+                               "random_state": RANDOM_STATE})
+            mlflow.log_metric("best_inner_cv_roc_auc", float(grid.best_score_))
+            mlflow.log_metrics(cv_metrics)
+            mlflow.log_metrics({f"test_{key}": value for key, value in test_metrics.items()})
+            for artifact in [cm_path, roc_path, feature_path, report_path, tuning_path]:
+                if artifact and artifact.exists():
+                    mlflow.log_artifact(str(artifact))
+            mlflow.sklearn.log_model(best_pipeline, artifact_path="model", input_example=X_test.iloc[:2])
 
-            # Log metrics
-            for k, v in cv_metrics.items():
-                mlflow.log_metric(k, v)
-            for k, v in cv_stds.items():
-                mlflow.log_metric(k, v)
-            for k, v in test_metrics.items():
-                mlflow.log_metric(f"test_{k}", v)
+        row = {"Model": model_name, "Grid Size": _grid_size(config["param_grid"]),
+               "Best Inner-CV AUC": round(float(grid.best_score_), 4), "Best Params": best_params_text,
+               **{key.replace("cv_", "CV ").replace("_", " ").title(): round(value, 4)
+                  for key, value in cv_metrics.items()},
+               **{f"Test {key.replace('_', ' ').title()}": round(value, 4)
+                  for key, value in test_metrics.items()}}
+        results.append(row)
+        tuning_rows.append({"Model": model_name, "Grid Size": _grid_size(config["param_grid"]),
+                            "Best Inner-CV AUC": round(float(grid.best_score_), 4), "Best Params": best_params_text})
 
-            # Log artifacts
-            if cm_path and cm_path.exists():
-                mlflow.log_artifact(str(cm_path))
-            if roc_path and roc_path.exists():
-                mlflow.log_artifact(str(roc_path))
-            if feat_path and feat_path.exists():
-                mlflow.log_artifact(str(feat_path))
-            if report_file.exists():
-                mlflow.log_artifact(str(report_file))
-
-            # Log model artifact with input example
-            sample_input = X_test.iloc[:2]
-            mlflow.sklearn.log_model(
-                sk_model=pipeline,
-                name="model",
-                input_example=sample_input,
-                serialization_format="cloudpickle",
-            )
-
-        # Compile comparison record
-        result_record = {
-            "Model": model_name,
-            "CV Accuracy": round(cv_metrics["cv_accuracy_mean"], 4),
-            "CV ROC-AUC": round(cv_metrics["cv_roc_auc_mean"], 4),
-            "Test Accuracy": round(test_metrics["accuracy"], 4),
-            "Test Precision": round(test_metrics["precision"], 4),
-            "Test Recall": round(test_metrics["recall"], 4),
-            "Test F1": round(test_metrics["f1"], 4),
-            "Test ROC-AUC": round(test_metrics["roc_auc"], 4),
-        }
-        results.append(result_record)
-
-    # Comparison summary
-    results_df = pd.DataFrame(results).sort_values(by="Test ROC-AUC", ascending=False)
-    comparison_csv = REPORTS_DIR / "model_comparison.csv"
-    comparison_md = REPORTS_DIR / "model_comparison.md"
-    results_df.to_csv(comparison_csv, index=False)
-    results_df.to_markdown(comparison_md, index=False)
-
-    logger.info(f"\nModel Comparison:\n{results_df.to_string(index=False)}")
-
-    # Select Best Model
-    best_model_name = results_df.iloc[0]["Model"]
-    best_pipeline = trained_pipelines[best_model_name]
-    logger.info(f"\nSelected Best Model: {best_model_name}")
-
-    # Serialize Best Pipeline to disk
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    joblib.dump(best_pipeline, MODEL_ARTIFACT_PATH)
-    logger.info(f"Serialized best pipeline saved to: {MODEL_ARTIFACT_PATH}")
-
-    # Save metadata
-    metadata = {
-        "best_model_name": best_model_name,
-        "metrics": results_df.iloc[0].to_dict(),
-        "features": list(X.columns),
-    }
-    with open(MODELS_DIR / "model_metadata.json", "w") as f:
-        json.dump(metadata, f, indent=4)
-
+    results_df = pd.DataFrame(results).sort_values(by=["CV Roc Auc Mean", "CV Accuracy Mean"],
+                                                   ascending=False).reset_index(drop=True)
+    tuning_df = pd.DataFrame(tuning_rows).sort_values("Best Inner-CV AUC", ascending=False)
+    for stem, frame in [("model_comparison", results_df), ("tuning_results", tuning_df)]:
+        frame.to_csv(REPORTS_DIR / f"{stem}.csv", index=False)
+        (REPORTS_DIR / f"{stem}.md").write_text(frame.to_markdown(index=False), encoding="utf-8")
+    champion = str(results_df.iloc[0]["Model"])
+    joblib.dump(fitted[champion], MODEL_ARTIFACT_PATH)
+    selected = next(row for row in tuning_rows if row["Model"] == champion)
+    metadata = {"best_model_name": champion,
+                "selection_criterion": "Highest nested-CV ROC-AUC; tie-breaker nested-CV accuracy. "
+                                       "Held-out test metrics are not used.",
+                "best_params": json.loads(selected["Best Params"]), "metrics": results_df.iloc[0].to_dict(),
+                "features": list(X.columns),
+                "test_set_note": "GradientBoosting can have higher test accuracy but is not selected from test metrics."}
+    (MODELS_DIR / "model_metadata.json").write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
+    logger.info("Selected %s using nested-CV ROC-AUC", champion)
     return metadata
 
 

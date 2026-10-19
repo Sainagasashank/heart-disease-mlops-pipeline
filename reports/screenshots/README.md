@@ -1,32 +1,20 @@
-# Screenshot Evidence Guide for Reporting
+# Evidence index
 
-This directory contains visual execution evidence for the BITS Pilani AIMLCZG523 Assignment 01 submission.
+Files in this folder are only real captures from local commands. When present, their names map to assignment evidence:
 
-## Required Screenshots Checklist
+- `03_mlflow_experiment_runs.png` — MLflow experiment run list.
+- `03b_mlflow_run_params_metrics.png` — parameters and metrics for a run.
+- `03c_mlflow_run_artifacts.png` — MLflow run artifacts.
+- `03d_mlflow_compare_runs.png` — comparison view.
+- `04_pytest_results.png`, `04b_flake8_lint.png` — terminal-style renders of captured command output.
+- `06_api_swagger_docs.png`, `06b_api_predict_response.png`, `06c_serving_verification.png` — running API documentation, request, and smoke check.
+- `08_prometheus_targets.png`, `08b_prometheus_request_rate.png`, `08c_prometheus_predictions_by_outcome.png`, `08d_prometheus_latency_p95.png`, `08e_api_request_logs.png` — Prometheus and API-log evidence.
 
-1. **`01_eda_visualizations.png`**:
-   - High-resolution target class balance, feature distribution histograms, and correlation matrix.
-   - *Source:* Generated in `reports/figures/`.
+## TO CAPTURE ON OWNER'S MACHINE
 
-2. **`02_model_training_comparison.png`**:
-   - Model comparison table in terminal or MLflow UI showing Logistic Regression (88.52% Test Acc, 0.9665 ROC-AUC), Random Forest, and Gradient Boosting.
+The following are intentionally not fabricated. Run these on the target machine and save the stated file names here:
 
-3. **`03_mlflow_tracking_ui.png`**:
-   - MLflow UI showing runs under the `heart-disease-prediction` experiment, logged parameters, metrics, and confusion matrix artifacts.
-   - *Command to launch:* `mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000`
-
-4. **`04_pytest_test_results.png`**:
-   - Terminal execution of `python -m pytest tests/ -v` displaying 12 passing unit & integration tests.
-
-5. **`05_github_actions_pipeline.png`**:
-   - GitHub Actions workflow run passing all stages: Linting & Unit Testing, Model Training & Benchmark, and Docker Verification.
-
-6. **`06_docker_container_run.png`**:
-   - Docker build and container execution serving FastAPI on port 8000.
-   - Execution of `python scripts/test_serving.py` with 200 OK responses across `/`, `/health`, `/predict`, and `/metrics`.
-
-7. **`07_kubernetes_deployment.png`**:
-   - Output of `kubectl get pods -l app=heart-disease-api -o wide`, `kubectl get service heart-disease-service`, and `kubectl get hpa heart-disease-hpa`.
-
-8. **`08_prometheus_grafana_dashboard.png`**:
-   - Live Grafana dashboard visualising RPS, 95th percentile latency, and real-time positive vs negative heart disease predictions.
+- `05_github_actions_run.png`: push the project, open the successful GitHub Actions run.
+- `06d_docker_build_run.png`: run `make docker-build`, `make docker-run`, then `make docker-test`.
+- `07_kubernetes_deployment.png`: run `kubectl get pods,svc,hpa` after `helm install heart-disease helm/heart-disease-api`.
+- `08f_grafana_dashboard.png`: run `make monitoring-up`, run `make traffic`, then open Grafana at `http://localhost:3000` (admin/admin).

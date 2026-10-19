@@ -13,7 +13,6 @@ from src.config import (
     COLUMN_NAMES,
     LOCAL_DATASET_PATH,
     RAW_CSV_PATH,
-    RAW_DATA_DIR,
     UCI_HEART_URL,
 )
 

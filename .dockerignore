@@ -7,12 +7,16 @@ __pycache__
 .pytest_cache
 .coverage
 htmlcov/
-tests/
+test/
 notebooks/
 reports/
 mlruns/
 mlflow.db
 dataset/
+data/
+monitoring/
+helm/
+k8s/
 *.zip
 .venv
 venv/
