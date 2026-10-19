@@ -38,7 +38,14 @@ switch ($Target.ToLowerInvariant()) {
     "train" { Invoke-Python -m src.train }
     "lint" { Invoke-Python -m flake8 src test --max-complexity=10 --max-line-length=127 }
     "test" { Invoke-Python -m pytest test/ -v }
-    "serve" { Invoke-Python -m uvicorn src.api.app:app --host 0.0.0.0 --port 8000 }
+    "serve" {
+        $SklearnVersion = & $Python -c "import sklearn; print(sklearn.__version__)"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        if ($SklearnVersion.Trim() -ne "1.6.1") {
+            throw "Host serving requires scikit-learn 1.6.1 (found $SklearnVersion). Activate a Python 3.12 .venv installed from requirements-dev.txt, or use .\Make.ps1 monitoring-up for the verified Docker API."
+        }
+        Invoke-Python -m uvicorn src.api.app:app --host 0.0.0.0 --port 8000
+    }
     "docker-build" { docker build -t heart-disease-api:latest . }
     "docker-run" { docker run -d -p 8000:8000 --name heart-disease-serving heart-disease-api:latest }
     "docker-test" { Invoke-Python scripts/test_serving.py }
