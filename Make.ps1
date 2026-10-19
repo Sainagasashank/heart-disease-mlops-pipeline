@@ -37,7 +37,23 @@ switch ($Target.ToLowerInvariant()) {
     "data" { Invoke-Python -m src.data_loader; Invoke-Python -m src.preprocessing; Invoke-Python -m src.eda }
     "train" { Invoke-Python -m src.train }
     "lint" { Invoke-Python -m flake8 src test --max-complexity=10 --max-line-length=127 }
-    "test" { Invoke-Python -m pytest test/ -v }
+    "test" {
+        # Serialized scikit-learn pipelines must be tested with the same
+        # pinned version used to train them.  On a Windows host that has a
+        # different interpreter, use the verified Python 3.12 Docker image
+        # rather than producing misleading pickle-compatibility failures.
+        $SklearnVersion = & $Python -c "import sklearn; print(sklearn.__version__)"
+        if ($LASTEXITCODE -eq 0 -and $SklearnVersion.Trim() -eq "1.6.1") {
+            Invoke-Python -m pytest test/ -v
+        }
+        else {
+            Write-Host "Host scikit-learn is '$($SklearnVersion.Trim())'; running tests in the pinned Python 3.12 Docker image."
+            docker build -t heart-disease-api:verified .
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            docker run --rm -v "${ProjectRoot}:/app" -w /app heart-disease-api:verified sh -c "pip install --no-cache-dir pytest==8.3.5 pytest-cov==6.0.0 && pytest test/ -v"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        }
+    }
     "serve" {
         $SklearnVersion = & $Python -c "import sklearn; print(sklearn.__version__)"
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
